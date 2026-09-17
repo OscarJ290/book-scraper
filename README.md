@@ -21,7 +21,7 @@ Built by **Oscar J. Villa García** · [ojviga@gmail.com](mailto:ojviga@gmail.co
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/oscarjvilla290/book-scraper.git
+git clone https://github.com/oscarj290/book-scraper.git
 cd book-scraper
 pip install -r requirements.txt
 python src/scraper.py
