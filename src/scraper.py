@@ -29,13 +29,15 @@ def get_soup(url):
     headers = {"User-Agent": "Mozilla/5.0 (portfolio-scraper/1.0)"}
     response = requests.get(url, headers=headers, timeout=10)
     response.raise_for_status()
+    # The pages are UTF-8, so do not rely on the HTTP headers to say so.
+    response.encoding = "utf-8"
     return BeautifulSoup(response.text, "html.parser")
 
 def parse_books(soup):
     books = []
     for article in soup.select("article.product_pod"):
         title  = article.h3.a["title"]
-        price  = float(article.select_one(".price_color").text.strip("£Â"))
+        price  = float(article.select_one(".price_color").text.strip().lstrip("£"))
         rating = RATING_MAP.get(article.p["class"][1], 0)
         avail  = article.select_one(".availability").text.strip()
         link   = BASE_URL + article.h3.a["href"].replace("../", "")
@@ -80,4 +82,4 @@ def export_to_excel(books):
 if __name__ == "__main__":
     books = scrape()
     out_path = export_to_excel(books)
-    print(f"\n✅ Report ready: {out_path}")
+    print(f"Report ready: {out_path}")
