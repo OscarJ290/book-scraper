@@ -15,9 +15,9 @@ from pathlib import Path
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,12 @@ MIN_DELAY  = 0.2
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 COLUMNS    = ["Title", "Price (£)", "Rating", "Availability", "URL"]
+COLUMN_WIDTHS = {"Title": 60, "Price (£)": 12, "Rating": 10, "Availability": 16, "URL": 90}
+
+HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
+HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
+BAND_FILL   = PatternFill("solid", fgColor="F2F2F2")
+LINK_FONT   = Font(color="0563C1", underline="single")
 
 @dataclass
 class ScrapeResult:
@@ -106,24 +112,79 @@ def scrape(max_pages=MAX_PAGES, delay=DELAY):
             time.sleep(delay)
     return result
 
-def export_to_excel(books, output_dir=OUTPUT_DIR):
+def style_header(ws, row, columns):
+    for col in range(1, columns + 1):
+        cell = ws.cell(row=row, column=col)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+
+def format_books_sheet(ws):
+    style_header(ws, 1, len(COLUMNS))
+    ws.freeze_panes = "A2"
+    price_col = COLUMNS.index("Price (£)") + 1
+    url_col   = COLUMNS.index("URL") + 1
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=price_col).number_format = "0.00"
+        url_cell = ws.cell(row=row, column=url_col)
+        url_cell.hyperlink = url_cell.value
+        url_cell.font = LINK_FONT
+        if row % 2 == 1:
+            for col in range(1, len(COLUMNS) + 1):
+                ws.cell(row=row, column=col).fill = BAND_FILL
+    for col, name in enumerate(COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(col)].width = COLUMN_WIDTHS[name]
+
+def build_summary_sheet(ws, books, pages_visited, run_at):
+    prices = [book["Price (£)"] for book in books]
+    in_stock = sum(book["Availability"].lower().startswith("in stock") for book in books)
+    metrics = [
+        ("Total books", len(books), "0"),
+        ("Minimum price (£)", min(prices) if prices else "n/a", "0.00"),
+        ("Maximum price (£)", max(prices) if prices else "n/a", "0.00"),
+        ("Average price (£)", sum(prices) / len(prices) if prices else "n/a", "0.00"),
+        ("Books in stock", in_stock, "0"),
+        ("Pages visited", pages_visited, "0"),
+        ("Run date and time", run_at, "yyyy-mm-dd hh:mm:ss"),
+    ]
+    ws.append(["Metric", "Value"])
+    style_header(ws, 1, 2)
+    for label, value, number_format in metrics:
+        ws.append([label, value])
+        ws.cell(row=ws.max_row, column=2).number_format = number_format
+
+    ws.append([])
+    ws.append(["Rating", "Books"])
+    table_header = ws.max_row
+    style_header(ws, table_header, 2)
+    for rating in sorted(RATING_MAP.values()):
+        ws.append([rating, sum(book["Rating"] == rating for book in books)])
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 22
+
+    chart = BarChart()
+    chart.title = "Books by rating"
+    chart.x_axis.title = "Rating"
+    chart.y_axis.title = "Books"
+    # Set explicitly so that spreadsheet programs draw both axes.
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+    chart.legend = None
+    data = Reference(ws, min_col=2, min_row=table_header, max_row=ws.max_row)
+    ratings = Reference(ws, min_col=1, min_row=table_header + 1, max_row=ws.max_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(ratings)
+    ws.add_chart(chart, "D2")
+
+def export_to_excel(books, output_dir=OUTPUT_DIR, pages_visited=0):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(books, columns=COLUMNS)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = output_dir / f"books_report_{ts}.xlsx"
+    run_at = datetime.now().replace(microsecond=0)
+    out_path = output_dir / f"books_report_{run_at:%Y%m%d_%H%M%S}.xlsx"
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Books")
-        ws = writer.book.active
-        fill = PatternFill("solid", fgColor="1F4E79")
-        font = Font(bold=True, color="FFFFFF", size=11)
-        for col in range(1, len(df.columns)+1):
-            cell = ws.cell(row=1, column=col)
-            cell.fill = fill
-            cell.font = font
-        ws.freeze_panes = "A2"
-        for col in range(1, len(df.columns)+1):
-            ws.column_dimensions[get_column_letter(col)].width = 20
+        format_books_sheet(writer.sheets["Books"])
+        build_summary_sheet(writer.book.create_sheet("Summary"), books, pages_visited, run_at)
     log.info(f"Excel saved -> {out_path}")
     return out_path
 
@@ -153,7 +214,7 @@ def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
     result = scrape(max_pages=args.max_pages, delay=args.delay)
-    out_path = export_to_excel(result.books, args.output)
+    out_path = export_to_excel(result.books, args.output, result.pages)
     log.info(f"Books saved: {len(result.books)}. Books skipped: {result.skipped}.")
     print(f"Report ready: {out_path}")
     return out_path
