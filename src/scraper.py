@@ -4,25 +4,28 @@ Author: Oscar J. Villa García
 Description: Scrapes books.toscrape.com and exports data to Excel with formatting.
 """
 
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.chart import BarChart, Reference
-import time
+import argparse
 import logging
+import math
+import time
 from datetime import datetime
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.chart import BarChart, Reference
+
 log = logging.getLogger(__name__)
 
 BASE_URL   = "https://books.toscrape.com/catalogue/"
 START_URL  = "https://books.toscrape.com/catalogue/page-1.html"
 MAX_PAGES  = 10
 DELAY      = 0.5
-OUTPUT_DIR = Path(__file__).parent.parent / "output"
+MIN_DELAY  = 0.2
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 
 def get_soup(url):
@@ -44,7 +47,7 @@ def parse_books(soup):
         books.append({"Title": title, "Price (£)": price, "Rating": rating, "Availability": avail, "URL": link})
     return books
 
-def scrape(max_pages=MAX_PAGES):
+def scrape(max_pages=MAX_PAGES, delay=DELAY):
     all_books, url, page = [], START_URL, 1
     while url:
         log.info(f"Scraping page {page}")
@@ -55,15 +58,16 @@ def scrape(max_pages=MAX_PAGES):
         next_btn = soup.select_one("li.next a")
         url = BASE_URL + next_btn["href"] if next_btn else None
         page += 1
-        time.sleep(DELAY)
+        time.sleep(delay)
     log.info(f"Done. {len(all_books)} books scraped.")
     return all_books
 
-def export_to_excel(books):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def export_to_excel(books, output_dir=OUTPUT_DIR):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(books)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = OUTPUT_DIR / f"books_report_{ts}.xlsx"
+    out_path = output_dir / f"books_report_{ts}.xlsx"
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Books")
         ws = writer.book.active
@@ -79,7 +83,35 @@ def export_to_excel(books):
     log.info(f"Excel saved -> {out_path}")
     return out_path
 
-if __name__ == "__main__":
-    books = scrape()
-    out_path = export_to_excel(books)
+def max_pages_value(text):
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or a positive integer")
+    return value
+
+def delay_value(text):
+    value = float(text)
+    if not math.isfinite(value) or value < MIN_DELAY:
+        raise argparse.ArgumentTypeError(f"must be at least {MIN_DELAY} seconds to avoid overloading the site")
+    return value
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Scrape books.toscrape.com and export the results to Excel.")
+    parser.add_argument("--max-pages", type=max_pages_value, default=MAX_PAGES,
+                        help="pages to scrape, 0 means all pages (default: %(default)s)")
+    parser.add_argument("--delay", type=delay_value, default=DELAY,
+                        help=f"seconds to wait between pages, minimum {MIN_DELAY} (default: %(default)s)")
+    parser.add_argument("--output", type=Path, default=OUTPUT_DIR,
+                        help="folder for the Excel report (default: the output folder of the project)")
+    return parser.parse_args(argv)
+
+def main(argv=None):
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    books = scrape(max_pages=args.max_pages, delay=args.delay)
+    out_path = export_to_excel(books, args.output)
     print(f"Report ready: {out_path}")
+    return out_path
+
+if __name__ == "__main__":
+    main()
