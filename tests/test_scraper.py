@@ -257,11 +257,36 @@ def test_default_arguments():
 def test_main_exports_partial_results_and_logs_the_totals(broken_page_2, sleeps, tmp_path, capsys, caplog):
     caplog.set_level(logging.INFO)
 
-    path = scraper.main(["--max-pages", "0", "--output", str(tmp_path / "report")])
+    scraper.main(["--max-pages", "0", "--output", str(tmp_path / "report")])
 
+    [path] = (tmp_path / "report").glob("*.xlsx")
     ws = load_workbook(path)["Summary"]
-    assert path.parent == tmp_path / "report"
     assert metrics(ws)["Total books"] == 3
     assert metrics(ws)["Pages visited"] == 1
     assert "Books saved: 3. Books skipped: 1." in caplog.text
+    assert capsys.readouterr().out.strip() == (
+        f"Report ready with errors: {path}. The run stopped early, check the log."
+    )
+
+
+def test_main_returns_1_on_a_network_error_and_keeps_page_1(broken_page_2, sleeps, tmp_path):
+    exit_code = scraper.main(["--max-pages", "0", "--output", str(tmp_path)])
+
+    [path] = tmp_path.glob("*.xlsx")
+    ws = load_workbook(path)["Books"]
+    assert exit_code == 1
+    assert [row[0] for row in ws.iter_rows(min_row=2, values_only=True)] == [
+        "The Paper Lighthouse",
+        "A Café for Quiet Robots",
+        "Seventeen Imaginary Rivers",
+    ]
+
+
+def test_main_returns_0_after_a_complete_run(requested, sleeps, tmp_path, capsys):
+    exit_code = scraper.main(["--max-pages", "0", "--output", str(tmp_path)])
+
+    [path] = tmp_path.glob("*.xlsx")
+    assert exit_code == 0
+    assert requested == [PAGE_1_URL, PAGE_2_URL]
+    assert load_workbook(path)["Books"].max_row == 6
     assert capsys.readouterr().out.strip() == f"Report ready: {path}"

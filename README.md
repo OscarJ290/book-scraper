@@ -93,7 +93,7 @@ A GitHub Actions workflow runs the tests on every push and pull request with Pyt
 * It does not run JavaScript.
 * It has no proxy support and no handling for blocked requests.
 * It does not retry failed requests.
-* A run that stops early because of a network error still finishes normally, so check the log. If the first page fails, the report contains no books.
+* A run that stops early because of a network error still writes the report with the books collected so far, but exits with code 1 and says so in the final message. If the first page fails, the report contains no books.
 * It reads only the catalogue pages, not the detail page of each book.
 * Prices are in pounds, as the site shows them. There is no currency conversion.
 

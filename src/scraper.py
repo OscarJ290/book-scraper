@@ -7,6 +7,7 @@ Description: Scrapes books.toscrape.com and exports data to Excel with formattin
 import argparse
 import logging
 import math
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -41,6 +42,7 @@ class ScrapeResult:
     books: list = field(default_factory=list)
     skipped: int = 0
     pages: int = 0
+    stopped_early: bool = False
 
 def get_soup(url):
     headers = {"User-Agent": "Mozilla/5.0 (portfolio-scraper/1.0)"}
@@ -99,6 +101,7 @@ def scrape(max_pages=MAX_PAGES, delay=DELAY):
             soup = get_soup(url)
         except requests.RequestException as error:
             log.error(f"Network error on page {page}, no more pages will be requested: {error}")
+            result.stopped_early = True
             break
         books, skipped = parse_books(soup)
         result.books.extend(books)
@@ -211,13 +214,17 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 def main(argv=None):
+    """Run the scraper. Return 1 if it stopped early or saved no books, otherwise 0."""
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
     result = scrape(max_pages=args.max_pages, delay=args.delay)
     out_path = export_to_excel(result.books, args.output, result.pages)
     log.info(f"Books saved: {len(result.books)}. Books skipped: {result.skipped}.")
+    if result.stopped_early or not result.books:
+        print(f"Report ready with errors: {out_path}. The run stopped early, check the log.")
+        return 1
     print(f"Report ready: {out_path}")
-    return out_path
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
